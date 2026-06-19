@@ -1,0 +1,138 @@
+name: Build Windows Installer
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "수동 빌드 버전 (예: 1.0.0-dev)"
+        required: false
+        default: "dev"
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: 체크아웃
+        uses: actions/checkout@v4
+
+      - name: 버전 결정
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "빌드 버전: ${VERSION}"
+
+      - name: Python 3.11 설치
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: 의존성 설치
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-build.txt
+
+      - name: PyInstaller 빌드
+        run: |
+          pyinstaller gigo-qc.spec --clean --noconfirm
+          dir dist\GIGO-QC
+
+      - name: README/LICENSE를 빌드 결과에 복사
+        shell: pwsh
+        run: |
+          Copy-Item README.md       dist\GIGO-QC\README.md
+          Copy-Item LICENSE.txt     dist\GIGO-QC\LICENSE.txt
+
+      - name: 포터블 ZIP 패키지 생성
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $zipName = "GIGO-QC-Portable-$version-win64.zip"
+          Compress-Archive -Path dist\GIGO-QC\* -DestinationPath $zipName
+          echo "PORTABLE_ZIP=$zipName" >> $env:GITHUB_ENV
+          Get-Item $zipName | Select-Object Name, Length
+
+      - name: NSIS 설치
+        run: |
+          choco install nsis -y --no-progress
+
+      - name: NSIS 인스톨러 빌드
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          # NSIS가 참조할 payload 폴더 준비
+          New-Item -ItemType Directory -Force -Path installer\payload | Out-Null
+          Copy-Item -Recurse -Force dist\GIGO-QC\* installer\payload\
+          Push-Location installer
+          & 'C:\Program Files (x86)\NSIS\makensis.exe' "/DAPP_VERSION_OVERRIDE=$version" installer.nsi
+          Pop-Location
+          $installer = Get-ChildItem installer\GIGO-QC-Setup-*.exe | Select-Object -First 1
+          $newName = "GIGO-QC-Setup-$version-win64.exe"
+          Move-Item $installer.FullName $newName -Force
+          echo "INSTALLER_EXE=$newName" >> $env:GITHUB_ENV
+          Get-Item $newName | Select-Object Name, Length
+
+      - name: SHA256 체크섬 생성
+        shell: pwsh
+        run: |
+          $files = @($env:PORTABLE_ZIP, $env:INSTALLER_EXE)
+          $checksums = foreach ($f in $files) {
+            $hash = (Get-FileHash $f -Algorithm SHA256).Hash.ToLower()
+            "$hash  $f"
+          }
+          $checksums | Out-File -Encoding ascii SHA256SUMS.txt
+          Get-Content SHA256SUMS.txt
+
+      - name: 아티팩트 업로드 (모든 빌드)
+        uses: actions/upload-artifact@v4
+        with:
+          name: gigo-qc-windows-${{ steps.version.outputs.version }}
+          path: |
+            ${{ env.PORTABLE_ZIP }}
+            ${{ env.INSTALLER_EXE }}
+            SHA256SUMS.txt
+
+      - name: GitHub Release 생성/업로드 (태그 빌드일 때만)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "GIGO QC ${{ steps.version.outputs.version }}"
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          body: |
+            ## 🪟 Windows 다운로드
+
+            **추천:** `GIGO-QC-Setup-${{ steps.version.outputs.version }}-win64.exe`
+            → 더블클릭 → 다음 → 완료. 시작 메뉴 / 바탕화면에 자동 등록됩니다.
+
+            **포터블:** `GIGO-QC-Portable-${{ steps.version.outputs.version }}-win64.zip`
+            → 압축 풀고 `GIGO-QC.exe` 더블클릭. 설치 불필요.
+
+            ## ⚙️ 시스템 요구사항
+            - Windows 10 / 11 (64-bit)
+            - 약 800MB 디스크 공간
+            - Python 설치 **불필요** (.exe에 포함됨)
+
+            ## 🚀 사용법
+            1. 위 파일 중 하나 다운로드
+            2. (설치형) 더블클릭 → 다음→다음→완료
+               (포터블) 압축 해제 후 GIGO-QC.exe 실행
+            3. 콘솔 창과 브라우저(http://127.0.0.1:8765)가 자동으로 열립니다
+            4. cryo-EM 그리드 이미지(MRC/TIFF/PNG) 드래그&드롭
+
+            전체 사용 가이드는 함께 설치되는 README.md 참고.
+          files: |
+            ${{ env.PORTABLE_ZIP }}
+            ${{ env.INSTALLER_EXE }}
+            SHA256SUMS.txt
