@@ -25,6 +25,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict
 
+from typing import List as _List
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
@@ -288,6 +289,81 @@ async def analyze_stream(
             "Connection":       "keep-alive",
         },
     )
+
+
+@app.post("/api/analyze/batch", summary="배치 분석 (다중 파일)")
+async def analyze_batch(
+    files: _List[UploadFile] = File(..., description="여러 이미지 파일 동시 분석"),
+    pixel_scale_nm: float = Form(1.0, gt=0),
+    grid_type_hint: str = Form("auto"),
+):
+    """
+    여러 파일을 일괄 분석하여 JSON 배열로 반환합니다. 각 파일의 result는
+    /api/analyze/stream의 done 이벤트 result와 동일한 구조입니다.
+    실패한 파일은 {error: "..."} 형식으로 포함됩니다.
+    """
+    results: list = []
+    loop = asyncio.get_event_loop()
+
+    for f in files:
+        entry: Dict[str, Any] = {"filename": f.filename or "unknown"}
+        try:
+            data = await f.read()
+            img_array, detected_scale = await loop.run_in_executor(
+                None, parse_file, data, f.filename or "unknown"
+            )
+            scale = detected_scale if detected_scale and detected_scale > 0 else pixel_scale_nm
+
+            img_norm  = await loop.run_in_executor(None, _analyzer.preprocess_normalize, img_array)
+            img_clahe = await loop.run_in_executor(None, _analyzer.preprocess_clahe, img_norm)
+            img_bin   = await loop.run_in_executor(None, _analyzer.preprocess_threshold, img_clahe)
+            img_clean = await loop.run_in_executor(None, _analyzer.preprocess_morph, img_bin)
+            contours  = await loop.run_in_executor(None, _analyzer.detect_contours, img_clean)
+            holes     = await loop.run_in_executor(None, _analyzer.measure_holes, contours, scale)
+            stats     = await loop.run_in_executor(
+                None, _analyzer.compute_stats, holes, img_array.shape[:2], scale
+            )
+
+            if stats["total_holes"] == 0:
+                entry["error"] = "홀이 검출되지 않았습니다. 픽셀 스케일 또는 이미지 품질을 확인하세요."
+                results.append(entry)
+                continue
+
+            classification = await loop.run_in_executor(None, classify, stats)
+            qc_result = await loop.run_in_executor(
+                None,
+                lambda: evaluate(
+                    stats,
+                    grid_type_hint=grid_type_hint,
+                    classifier_best_match=classification.get("best_match"),
+                ),
+            )
+            preview_b64 = await loop.run_in_executor(
+                None,
+                lambda: _analyzer.generate_overlay_preview(
+                    img_norm, holes, contours, qc_result.get("qc_checks")
+                ),
+            )
+
+            entry.update({
+                "analysis_time":      datetime.now().isoformat(),
+                "pixel_scale_nm":     scale,
+                "scale_source":       "auto" if detected_scale else "manual",
+                "holes":              holes,
+                "stats":              stats,
+                "classification":     classification,
+                "qc":                 qc_result,
+                "qc_result":          qc_result,
+                "overlay_png_base64": preview_b64,
+                "preview_b64":        preview_b64,
+            })
+            results.append(entry)
+        except Exception as exc:
+            traceback.print_exc()
+            entry["error"] = f"분석 실패: {exc}"
+            results.append(entry)
+
+    return {"count": len(results), "results": results}
 
 
 @app.post("/api/report/pdf", summary="PDF 리포트 생성")

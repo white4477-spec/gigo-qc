@@ -183,7 +183,7 @@ def measure_holes(
         각 홀의 측정값 dict 목록.
         필드: id, area_um2, diameter_um, circularity, aspect_ratio, cx_px, cy_px
     """
-    scale_um = pixel_scale_nm / 1000.0  # nm → μm
+    scale_um = pixel_scale_nm / 1000.0  # nm → µm
     holes: List[Dict[str, Any]] = []
     hole_id = 1
 

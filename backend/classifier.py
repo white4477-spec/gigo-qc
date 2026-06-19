@@ -6,10 +6,10 @@ GIGO QC — Grid Suitability 자동 분류 (classifier.py)
 분석 후 리포트에서 표기합니다.
 
 Grid Profile 4종 (PRD 섹션 3-4 기준):
-  Type A — Membrane Protein:   직경 0.5~5.0 μm, 원형도 ≥ 0.60
-  Type B — Protein Complex:    직경 1.0~10.0 μm, 원형도 ≥ 0.50
-  Type C — Nanomaterial/Virus: 직경 0.2~2.0 μm, 원형도 ≥ 0.55
-  Type D — Large Specimen:     직경 5.0~30.0 μm, 원형도 ≥ 0.40
+  Type A — Membrane Protein:   직경 0.5~5.0 µm, 원형도 ≥ 0.60
+  Type B — Protein Complex:    직경 1.0~10.0 µm, 원형도 ≥ 0.50
+  Type C — Nanomaterial/Virus: 직경 0.2~2.0 µm, 원형도 ≥ 0.55
+  Type D — Large Specimen:     직경 5.0~30.0 µm, 원형도 ≥ 0.40
 """
 
 from __future__ import annotations
@@ -104,12 +104,12 @@ def classify(stats: Dict[str, Any]) -> Dict[str, Any]:
     reasons: List[str] = []
     if avg_diam < 0.2:
         reasons.append(
-            f"평균 직경 {avg_diam:.2f} μm — 모든 표준 타입보다 작습니다 "
+            f"평균 직경 {avg_diam:.2f} µm — 모든 표준 타입보다 작습니다 "
             "(홀이 너무 작거나 노이즈가 검출되었을 수 있습니다)"
         )
     elif avg_diam > 30.0:
         reasons.append(
-            f"평균 직경 {avg_diam:.2f} μm — 표준 범위를 초과합니다 "
+            f"평균 직경 {avg_diam:.2f} µm — 표준 범위를 초과합니다 "
             "(그리드 노화 또는 손상 의심)"
         )
     if avg_circ < 0.40:
@@ -135,9 +135,9 @@ def classify(stats: Dict[str, Any]) -> Dict[str, Any]:
             dmin, dmax = spec["diam_range"]
             sub_reasons: List[str] = []
             if avg_diam < dmin:
-                sub_reasons.append(f"직경 {avg_diam:.2f} μm < 최소 {dmin} μm")
+                sub_reasons.append(f"직경 {avg_diam:.2f} µm < 최소 {dmin} µm")
             elif avg_diam > dmax:
-                sub_reasons.append(f"직경 {avg_diam:.2f} μm > 최대 {dmax} μm")
+                sub_reasons.append(f"직경 {avg_diam:.2f} µm > 최대 {dmax} µm")
             if avg_circ < spec["min_circ"]:
                 sub_reasons.append(
                     f"원형도 {avg_circ:.2f} < 기준 {spec['min_circ']}"
@@ -173,13 +173,13 @@ def _generate_recommendation(
     best : str | None
         가장 적합한 타입 이름
     diam : float
-        평균 직경 (μm)
+        평균 직경 (µm)
     circ : float
         평균 원형도
     coverage : float
         홀 커버리지 (%)
     density : float
-        홀 밀도 (holes/μm²)
+        홀 밀도 (holes/µm²)
 
     Returns
     -------
@@ -198,12 +198,12 @@ def _generate_recommendation(
 
     lines = [
         f"이 그리드는 {best}에 가장 적합합니다.",
-        f"평균 홀 직경 {diam:.2f} μm, 원형도 {circ:.2f}로 해당 실험 조건에 적합합니다.",
-        f"직경 허용 범위 {dmin}~{dmax} μm 내에 있습니다.",
+        f"평균 홀 직경 {diam:.2f} µm, 원형도 {circ:.2f}로 해당 실험 조건에 적합합니다.",
+        f"직경 허용 범위 {dmin}~{dmax} µm 내에 있습니다.",
         f"홀 커버리지 {coverage:.1f}%는 {coverage_desc}입니다.",
     ]
     if density > 0:
-        lines.append(f"홀 밀도 {density:.3f} holes/μm².")
+        lines.append(f"홀 밀도 {density:.3f} holes/µm².")
 
     return " ".join(lines)
 

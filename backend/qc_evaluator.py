@@ -4,10 +4,10 @@ GIGO QC — QC 판정 모듈 (qc_evaluator.py)
 PRD F-04 기준에 따라 PASS / WARNING / FAIL 판정을 수행합니다.
 
 Grid 타입별 QC 기준 (PRD 3.md):
-  Type A: 직경 0.5~5.0 μm, 원형도 ≥ 0.6, 밀도 ≥ 2.0/μm², 커버리지 20~60%
-  Type B: 직경 1.0~10.0 μm, 원형도 ≥ 0.5, 밀도 1.0~5.0/μm², 커버리지 25~55%
-  Type C: 직경 0.2~2.0 μm, 원형도 ≥ 0.55, 밀도 ≥ 3.0/μm², 커버리지 15~50%
-  Type D: 직경 5.0~30.0 μm, 원형도 ≥ 0.4, 밀도 ≥ 0.5/μm², 커버리지 10~50%
+  Type A: 직경 0.5~5.0 µm, 원형도 ≥ 0.6, 밀도 ≥ 2.0/µm², 커버리지 20~60%
+  Type B: 직경 1.0~10.0 µm, 원형도 ≥ 0.5, 밀도 1.0~5.0/µm², 커버리지 25~55%
+  Type C: 직경 0.2~2.0 µm, 원형도 ≥ 0.55, 밀도 ≥ 3.0/µm², 커버리지 15~50%
+  Type D: 직경 5.0~30.0 µm, 원형도 ≥ 0.4, 밀도 ≥ 0.5/µm², 커버리지 10~50%
 
 판정 로직:
   4/4 통과 → PASS
@@ -34,9 +34,9 @@ QC_STANDARDS: Dict[str, Dict[str, Any]] = {
         "cov_min": 20.0,
         "cov_max": 60.0,
         "desc_fail": {
-            "diameter_range": "홀 직경이 막단백질 실험 기준(0.5~5.0 μm)을 벗어났습니다.",
+            "diameter_range": "홀 직경이 막단백질 실험 기준(0.5~5.0 µm)을 벗어났습니다.",
             "circularity":    "원형도가 기준(≥ 0.60) 미만입니다.",
-            "density":        "홀 밀도가 기준(≥ 2.0 holes/μm²) 미만입니다.",
+            "density":        "홀 밀도가 기준(≥ 2.0 holes/µm²) 미만입니다.",
             "coverage":       "홀 커버리지가 기준(20~60%) 범위를 벗어났습니다.",
         },
     },
@@ -50,9 +50,9 @@ QC_STANDARDS: Dict[str, Dict[str, Any]] = {
         "cov_min": 25.0,
         "cov_max": 55.0,
         "desc_fail": {
-            "diameter_range": "홀 직경이 단백질 복합체 실험 기준(1.0~10.0 μm)을 벗어났습니다.",
+            "diameter_range": "홀 직경이 단백질 복합체 실험 기준(1.0~10.0 µm)을 벗어났습니다.",
             "circularity":    "원형도가 기준(≥ 0.50) 미만입니다.",
-            "density":        "홀 밀도가 기준(1.0~5.0 holes/μm²) 범위를 벗어났습니다.",
+            "density":        "홀 밀도가 기준(1.0~5.0 holes/µm²) 범위를 벗어났습니다.",
             "coverage":       "홀 커버리지가 기준(25~55%) 범위를 벗어났습니다.",
         },
     },
@@ -66,9 +66,9 @@ QC_STANDARDS: Dict[str, Dict[str, Any]] = {
         "cov_min": 15.0,
         "cov_max": 50.0,
         "desc_fail": {
-            "diameter_range": "홀 직경이 나노소재 실험 기준(0.2~2.0 μm)을 벗어났습니다.",
+            "diameter_range": "홀 직경이 나노소재 실험 기준(0.2~2.0 µm)을 벗어났습니다.",
             "circularity":    "원형도가 기준(≥ 0.55) 미만입니다.",
-            "density":        "홀 밀도가 기준(≥ 3.0 holes/μm²) 미만입니다.",
+            "density":        "홀 밀도가 기준(≥ 3.0 holes/µm²) 미만입니다.",
             "coverage":       "홀 커버리지가 기준(15~50%) 범위를 벗어났습니다.",
         },
     },
@@ -82,9 +82,9 @@ QC_STANDARDS: Dict[str, Dict[str, Any]] = {
         "cov_min": 10.0,
         "cov_max": 50.0,
         "desc_fail": {
-            "diameter_range": "홀 직경이 대형 시편 기준(5.0~30.0 μm)을 벗어났습니다.",
+            "diameter_range": "홀 직경이 대형 시편 기준(5.0~30.0 µm)을 벗어났습니다.",
             "circularity":    "원형도가 기준(≥ 0.40) 미만입니다.",
-            "density":        "홀 밀도가 기준(≥ 0.5 holes/μm²) 미만입니다.",
+            "density":        "홀 밀도가 기준(≥ 0.5 holes/µm²) 미만입니다.",
             "coverage":       "홀 커버리지가 기준(10~50%) 범위를 벗어났습니다.",
         },
     },
@@ -192,8 +192,8 @@ def evaluate(
     details = {
         "diameter_range": {
             "value": avg_diam,
-            "unit": "μm",
-            "range": f"{std['diam_min']}~{std['diam_max']} μm",
+            "unit": "µm",
+            "range": f"{std['diam_min']}~{std['diam_max']} µm",
             "passed": diam_ok,
         },
         "circularity": {
@@ -203,7 +203,7 @@ def evaluate(
         },
         "density": {
             "value": density,
-            "unit": "holes/μm²",
+            "unit": "holes/µm²",
             "threshold": _density_threshold_str(std),
             "passed": dens_ok,
         },
@@ -265,9 +265,9 @@ def _density_threshold_str(std: Dict[str, Any]) -> str:
     dmin = std.get("density_min")
     dmax = std.get("density_max")
     if dmin is not None and dmax is not None:
-        return f"{dmin}~{dmax} holes/μm²"
+        return f"{dmin}~{dmax} holes/µm²"
     elif dmin is not None:
-        return f"≥ {dmin} holes/μm²"
+        return f"≥ {dmin} holes/µm²"
     elif dmax is not None:
-        return f"≤ {dmax} holes/μm²"
+        return f"≤ {dmax} holes/µm²"
     return "N/A"
