@@ -11,6 +11,9 @@ on:
         required: false
         default: "dev"
 
+permissions:
+  contents: write   # Release 생성/업로드에 필요
+
 jobs:
   build:
     runs-on: windows-latest
