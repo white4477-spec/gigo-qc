@@ -34,6 +34,8 @@ hiddenimports += [
     "skimage.filters",        # threshold_sauvola, threshold_otsu
     "skimage._shared",
     "skimage._shared.utils",
+    # v1.2.1: 스케일바 OCR
+    "pytesseract",
     "reportlab",
     "reportlab.pdfgen",
     "reportlab.lib",

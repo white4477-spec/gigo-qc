@@ -42,6 +42,7 @@ import analyzer as _analyzer
 from classifier import classify
 from qc_evaluator import evaluate
 import report_generator as _report_gen
+import scalebar_detector as _scalebar
 
 
 # ─── FastAPI 앱 초기화 ─────────────────────────────────────────────────────────
@@ -70,9 +71,38 @@ app.add_middleware(
 
 # ─── SSE 유틸리티 ─────────────────────────────────────────────────────────────
 
+def _to_native(obj):
+    """numpy / 사용자 정의 객체를 표준 파이썬 타입으로 재귀 변환.
+
+    FastAPI의 jsonable_encoder는 numpy.bool_ 등에서 깨질 수 있으므로
+    분석 결과 dict를 응답하기 전에 한 번 정리한다.
+    """
+    try:
+        import numpy as _np
+    except Exception:
+        _np = None
+    if obj is None or isinstance(obj, (str, bool, int, float)):
+        return obj
+    if _np is not None:
+        if isinstance(obj, _np.bool_):
+            return bool(obj)
+        if isinstance(obj, _np.integer):
+            return int(obj)
+        if isinstance(obj, _np.floating):
+            return float(obj)
+        if isinstance(obj, _np.ndarray):
+            return [_to_native(x) for x in obj.tolist()]
+    if isinstance(obj, dict):
+        return {str(k): _to_native(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set)):
+        return [_to_native(v) for v in obj]
+    # bytes, datetime 등은 그대로 두어 FastAPI가 처리하게 한다
+    return obj
+
+
 def _sse_event(data: Dict[str, Any]) -> str:
     """dict를 SSE 이벤트 문자열로 변환합니다."""
-    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+    return f"data: {json.dumps(_to_native(data), ensure_ascii=False)}\n\n"
 
 
 # SSE 단계 정의 (label은 한국어)
@@ -101,9 +131,12 @@ async def health_check():
 async def analyze_stream(
     file: UploadFile = File(..., description="MRC/MRCS/TIFF/PNG/JPG 이미지 파일"),
     pixel_scale_nm: float = Form(
-        1.0,
-        description="nm/pixel 스케일 값. MRC는 자동 추출 시도.",
-        gt=0,
+        0.0,
+        description=(
+            "nm/pixel 스케일 값. 0 또는 음수이면 자동 감지 시도 "
+            "(MRC 헤더 → TIFF 메타 → 이미지 스케일바 OCR)."
+        ),
+        ge=0,
     ),
     grid_type_hint: str = Form(
         "auto",
@@ -158,9 +191,39 @@ async def analyze_stream(
                 })
                 return
 
-            # MRC에서 자동 감지된 스케일이 있으면 우선 사용
-            effective_scale = detected_scale if detected_scale and detected_scale > 0 \
-                              else pixel_scale_nm
+            # 스케일 우선순위 (v1.2.1):
+            #   - 사용자가 값을 입력했으면 → manual (최우선, UX 일관성)
+            #   - 비워둔 경우(자동 모드):
+            #       1) 메타데이터 (MRC 헤더 / TIFF tag)
+            #       2) 이미지 내 스케일바 OCR
+            #       3) 기본 1.0 (경고)
+            user_manual = pixel_scale_nm if pixel_scale_nm and pixel_scale_nm > 0 else None
+            scale_source = "manual"
+            scalebar_info = None
+            effective_scale = None
+
+            if user_manual is not None:
+                effective_scale = float(user_manual)
+                scale_source = "manual"
+            elif detected_scale and detected_scale > 0:
+                effective_scale = float(detected_scale)
+                scale_source = "mrc" if filename.lower().endswith((".mrc", ".mrcs")) else "tiff"
+            else:
+                # 메타도 없고 수동 입력도 없으면 스케일바 OCR 시도
+                yield _sse_event({"step": "scalebar", "label": "이미지 스케일바 자동 인식 중", "progress": 15})
+                await asyncio.sleep(0.05)
+                try:
+                    scalebar_info = await asyncio.get_event_loop().run_in_executor(
+                        None, _scalebar.detect_scalebar, img_array
+                    )
+                except Exception:
+                    scalebar_info = None
+                if scalebar_info is not None:
+                    effective_scale = float(scalebar_info.nm_per_px)
+                    scale_source = "scalebar"
+                else:
+                    effective_scale = 1.0
+                    scale_source = "default"
 
             # ── Step 2: 정규화 ────────────────────────────────────────────────
             yield _sse_event({"step": "normalize", "label": "이미지 정규화", "progress": 20})
@@ -280,11 +343,21 @@ async def analyze_stream(
             )
 
             # ── Step 9: 완료 ──────────────────────────────────────────────────
+            scalebar_dict = None
+            if scalebar_info is not None:
+                scalebar_dict = {
+                    "bar_length_px": scalebar_info.bar_length_px,
+                    "value":         scalebar_info.value,
+                    "unit":          scalebar_info.unit,
+                    "text":          scalebar_info.text,
+                    "confidence":    round(scalebar_info.confidence, 3),
+                }
             result: Dict[str, Any] = {
                 "filename":            filename,
                 "analysis_time":       datetime.now().isoformat(),
                 "pixel_scale_nm":      effective_scale,
-                "scale_source":        "auto" if detected_scale else "manual",
+                "scale_source":        scale_source,
+                "scalebar":            scalebar_dict,
                 "mode":                mode,
                 "holes":               holes,
                 "stats":               stats,
@@ -327,7 +400,7 @@ async def analyze_stream(
 @app.post("/api/analyze/batch", summary="배치 분석 (다중 파일)")
 async def analyze_batch(
     files: _List[UploadFile] = File(..., description="여러 이미지 파일 동시 분석"),
-    pixel_scale_nm: float = Form(1.0, gt=0),
+    pixel_scale_nm: float = Form(0.0, ge=0),
     grid_type_hint: str = Form("auto"),
     mode: str = Form("balanced"),
     min_confidence: float = Form(0.0, ge=0.0, le=1.0),
@@ -344,10 +417,33 @@ async def analyze_batch(
         entry: Dict[str, Any] = {"filename": f.filename or "unknown"}
         try:
             data = await f.read()
+            fname = f.filename or "unknown"
             img_array, detected_scale = await loop.run_in_executor(
-                None, parse_file, data, f.filename or "unknown"
+                None, parse_file, data, fname
             )
-            scale = detected_scale if detected_scale and detected_scale > 0 else pixel_scale_nm
+
+            # v1.2.1: 수동 입력 → 메타 → 스케일바 → 기본
+            user_manual = pixel_scale_nm if pixel_scale_nm and pixel_scale_nm > 0 else None
+            scalebar_info = None
+            if user_manual is not None:
+                scale = float(user_manual)
+                src = "manual"
+            elif detected_scale and detected_scale > 0:
+                scale = float(detected_scale)
+                src = "mrc" if fname.lower().endswith((".mrc", ".mrcs")) else "tiff"
+            else:
+                try:
+                    scalebar_info = await loop.run_in_executor(
+                        None, _scalebar.detect_scalebar, img_array
+                    )
+                except Exception:
+                    scalebar_info = None
+                if scalebar_info is not None:
+                    scale = float(scalebar_info.nm_per_px)
+                    src = "scalebar"
+                else:
+                    scale = 1.0
+                    src = "default"
 
             # v1.2.0: 통합 analyze() 사용 — 모드별 자동 라우팅
             analysis = await loop.run_in_executor(
@@ -376,10 +472,20 @@ async def analyze_batch(
             )
             preview_b64 = preview_b64_from_analyze
 
+            sb_dict = None
+            if scalebar_info is not None:
+                sb_dict = {
+                    "bar_length_px": scalebar_info.bar_length_px,
+                    "value":         scalebar_info.value,
+                    "unit":          scalebar_info.unit,
+                    "text":          scalebar_info.text,
+                    "confidence":    round(scalebar_info.confidence, 3),
+                }
             entry.update({
                 "analysis_time":      datetime.now().isoformat(),
                 "pixel_scale_nm":     scale,
-                "scale_source":       "auto" if detected_scale else "manual",
+                "scale_source":       src,
+                "scalebar":           sb_dict,
                 "mode":               mode,
                 "holes":              holes,
                 "stats":              stats,
@@ -395,7 +501,7 @@ async def analyze_batch(
             entry["error"] = f"분석 실패: {exc}"
             results.append(entry)
 
-    return {"count": len(results), "results": results}
+    return _to_native({"count": len(results), "results": results})
 
 
 @app.post("/api/report/pdf", summary="PDF 리포트 생성")

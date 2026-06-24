@@ -45,10 +45,34 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-build.txt
 
+      - name: Tesseract OCR 설치 (빌드 동봉용)
+        shell: pwsh
+        run: |
+          choco install tesseract -y --no-progress
+          # 설치 경로 확인
+          $tess = Get-ChildItem -Recurse -Path 'C:\Program Files\Tesseract-OCR' -Filter 'tesseract.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $tess) { throw 'Tesseract 설치 실패' }
+          echo "TESSERACT_DIR=$($tess.DirectoryName)" >> $env:GITHUB_ENV
+          & $tess.FullName --version
+
       - name: PyInstaller 빌드
         run: |
           pyinstaller gigo-qc.spec --clean --noconfirm
           dir dist\GIGO-QC
+
+      - name: Tesseract 바이너리 동봉 (PyInstaller 결과에 복사)
+        shell: pwsh
+        run: |
+          $dest = "dist\GIGO-QC\tesseract"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          # tesseract.exe + tessdata + DLL 전체 복사
+          Copy-Item -Recurse -Force "$env:TESSERACT_DIR\*" $dest
+          if (Test-Path "$dest\tesseract.exe") {
+            Write-Host "Tesseract 동봉 완료:"
+            & "$dest\tesseract.exe" --version
+          } else {
+            throw 'Tesseract 동봉 실패'
+          }
 
       - name: README/LICENSE를 빌드 결과에 복사
         shell: pwsh

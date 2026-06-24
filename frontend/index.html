@@ -332,9 +332,9 @@ code,.mono{font-family:'JetBrains Mono',monospace}
 
       <div class="settings-grid">
         <div class="field">
-          <label for="setScale">픽셀 스케일 (nm/pixel)</label>
-          <input type="number" id="setScale" class="input" min="0.01" step="0.01" value="1.0">
-          <span class="desc">MRC 파일은 자동 감지된 값이 우선 사용됩니다.</span>
+          <label for="setScale">픽셀 스케일 (nm/pixel) <span style="color:var(--accent);font-size:11px;margin-left:6px">자동 감지</span></label>
+          <input type="number" id="setScale" class="input" min="0" step="0.01" placeholder="비워두면 자동· 입력하면 수동">
+          <span class="desc">비워두면 자동 감지(MRC 헤더 → TIFF 메타 → 스케일바 OCR). 수동값을 입력하면 그 값이 우선됩니다.</span>
         </div>
         <div class="field">
           <label for="setGridType">Grid Type Hint</label>
@@ -469,6 +469,14 @@ const fmtSize = (b) => {
 };
 const fmtNum = (n, d=3) => (typeof n === 'number' ? n.toFixed(d) : String(n ?? '—'));
 const modeKor = (m) => ({fast:'빠름', balanced:'균형', precise:'정밀'}[m] || m || '권장');
+const scaleSrcKor = (s) => ({
+  mrc: 'MRC 헤더 자동',
+  tiff: 'TIFF 메타 자동',
+  scalebar: '이미지 스케일바 OCR',
+  manual: '수동 입력',
+  default: '기본값 (추정 불가)',
+  auto: '자동',
+}[s] || s || '—');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 // ─── 테마 토글 ──────────────────────────────────────────────────────
@@ -618,7 +626,7 @@ function hideLoading(){
 async function runSingleAnalysis(file){
   const fd = new FormData();
   fd.append('file', file);
-  fd.append('pixel_scale_nm', $('#setScale').value || '1.0');
+  fd.append('pixel_scale_nm', $('#setScale').value || '0');
   fd.append('grid_type_hint', $('#setGridType').value);
   fd.append('mode', $('#setMode').value || 'balanced');
   fd.append('min_confidence', $('#setMinConfidence').value || '0');
@@ -675,7 +683,7 @@ async function runSingleAnalysis(file){
 async function runBatchAnalysis(files){
   const fd = new FormData();
   for (const f of files) fd.append('files', f);
-  fd.append('pixel_scale_nm', $('#setScale').value || '1.0');
+  fd.append('pixel_scale_nm', $('#setScale').value || '0');
   fd.append('grid_type_hint', $('#setGridType').value);
   fd.append('mode', $('#setMode').value || 'balanced');
   fd.append('min_confidence', $('#setMinConfidence').value || '0');
@@ -738,7 +746,7 @@ function renderSingleResult(r){
       <div class="preview-wrap">
         <img src="data:image/png;base64,${overlay}" alt="분석 프리뷰">
         <div class="preview-caption">
-          <span>총 ${stats.total_holes ?? 0}개 홀 검출 · pixel scale ${fmtNum(r.pixel_scale_nm, 3)} nm/px (${r.scale_source==='auto'?'자동':'수동'})</span>
+          <span>총 ${stats.total_holes ?? 0}개 홀 검출 · pixel scale ${fmtNum(r.pixel_scale_nm, 3)} nm/px (${scaleSrcKor(r.scale_source)})</span>
           <a href="data:image/png;base64,${overlay}" download="${esc(r.filename)}_preview.png" class="btn btn-ghost" style="padding:4px 10px;font-size:12px">이미지 저장</a>
         </div>
       </div>
@@ -773,8 +781,11 @@ function renderSingleResult(r){
 
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;font-size:12px">
       <span style="background:var(--surface-2);padding:5px 10px;border-radius:6px;color:var(--text-muted)">분석 모드: <strong style="color:var(--accent)">${modeKor(r.mode)}</strong></span>
+      <span style="background:var(--surface-2);padding:5px 10px;border-radius:6px;color:var(--text-muted)">스케일 출처: <strong style="color:var(--accent)">${scaleSrcKor(r.scale_source)}</strong></span>
+      ${r.scalebar ? `<span style="background:var(--surface-2);padding:5px 10px;border-radius:6px;color:var(--text-muted)" title="검출된 스케일바 정보">스케일바: <strong>${r.scalebar.value} ${esc(r.scalebar.unit)}</strong> = ${r.scalebar.bar_length_px}px</span>` : ''}
       ${stats.avg_confidence !== undefined ? `<span style="background:var(--surface-2);padding:5px 10px;border-radius:6px;color:var(--text-muted)">AI 신뢰도: <strong style="color:var(--accent)">${fmtNum(stats.avg_confidence, 2)}</strong></span>` : ''}
       ${stats.hough_added ? `<span style="background:var(--surface-2);padding:5px 10px;border-radius:6px;color:var(--text-muted)">Hough 보완: <strong>+${stats.hough_added}</strong></span>` : ''}
+      ${r.scale_source === 'default' ? `<span style="background:rgba(255,193,7,0.15);color:#fb923c;padding:5px 10px;border-radius:6px;font-weight:600" title="메타·스케일바·수동 모두 없어 기본값 1.0 사용">⚠ 스케일 미확인</span>` : ''}
     </div>
 
     ${previewHtml}
