@@ -112,6 +112,11 @@ async def analyze_stream(
             "'B': 단백질 복합체 | 'C': 나노소재 | 'D': 대형 시편"
         ),
     ),
+    mode: str = Form(
+        "balanced",
+        description="'fast' | 'balanced' (권장) | 'precise' (AI 신뢰도 점수)",
+    ),
+    min_confidence: float = Form(0.0, ge=0.0, le=1.0),
 ):
     """
     이미지를 업로드하고 홀 검출·분석을 실행합니다.
@@ -174,35 +179,60 @@ async def analyze_stream(
             )
 
             # ── Step 4: 이진화 ────────────────────────────────────────────────
-            yield _sse_event({"step": "threshold", "label": "Otsu 이진화", "progress": 50})
+            thresh_label = "Sauvola 적응 이진화" if mode != "fast" else "Otsu 이진화"
+            yield _sse_event({"step": "threshold", "label": thresh_label, "progress": 45})
             await asyncio.sleep(0.05)
 
+            thresh_method = "otsu" if mode == "fast" else "sauvola"
             img_bin = await asyncio.get_event_loop().run_in_executor(
-                None, _analyzer.preprocess_threshold, img_clahe
+                None,
+                lambda: _analyzer.preprocess_threshold(img_clahe, method=thresh_method)
             )
 
             # ── Step 5: Morphological 처리 ────────────────────────────────────
-            yield _sse_event({"step": "morph", "label": "Morphological 처리", "progress": 65})
+            yield _sse_event({"step": "morph", "label": "Morphological 처리", "progress": 55})
             await asyncio.sleep(0.05)
 
+            morph_aggressive = (thresh_method == "sauvola")
             img_clean = await asyncio.get_event_loop().run_in_executor(
-                None, _analyzer.preprocess_morph, img_bin
+                None,
+                lambda: _analyzer.preprocess_morph(img_bin, aggressive=morph_aggressive)
             )
+            # Sauvola 이후 작은 텔스처 제거
+            if thresh_method == "sauvola":
+                img_clean = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: _analyzer.filter_components_by_size(img_clean, 0.15)
+                )
 
-            # ── Step 6: 컨투어 검출 ───────────────────────────────────────────
-            yield _sse_event({"step": "contours", "label": "홀 컨투어 검출", "progress": 80})
+            # ── Step 6: 분할 (Watershed/단순 컨투어) ──────────────────────────
+            seg_label = "Watershed 홀 분리" if mode != "fast" else "홀 컨투어 검출"
+            yield _sse_event({"step": "contours", "label": seg_label, "progress": 70})
             await asyncio.sleep(0.05)
 
-            contours = await asyncio.get_event_loop().run_in_executor(
-                None, _analyzer.detect_contours, img_clean
-            )
+            if mode == "fast":
+                contours = await asyncio.get_event_loop().run_in_executor(
+                    None, _analyzer.detect_contours, img_clean
+                )
+            else:
+                labels = await asyncio.get_event_loop().run_in_executor(
+                    None, _analyzer.segment_watershed, img_clean
+                )
+                contours = await asyncio.get_event_loop().run_in_executor(
+                    None, _analyzer.labels_to_contours, labels
+                )
 
-            # ── Step 7: 파라미터 계산 ─────────────────────────────────────────
-            yield _sse_event({"step": "measure", "label": "파라미터 계산", "progress": 90})
+            # ── Step 7: 파라미터 계산 + (precise) AI 신뢰도 ─────────────────
+            measure_label = "파라미터 계산 + AI 신뢰도 평가" if mode == "precise" else "파라미터 계산"
+            yield _sse_event({"step": "measure", "label": measure_label, "progress": 85})
             await asyncio.sleep(0.05)
 
+            compute_conf = (mode == "precise")
             holes = await asyncio.get_event_loop().run_in_executor(
-                None, _analyzer.measure_holes, contours, effective_scale
+                None,
+                lambda: _analyzer.measure_holes(
+                    contours, effective_scale, compute_confidence=compute_conf
+                ),
             )
             stats = await asyncio.get_event_loop().run_in_executor(
                 None, _analyzer.compute_stats, holes, img_array.shape[:2], effective_scale
@@ -238,12 +268,14 @@ async def analyze_stream(
                 )
             )
 
-            # 오버레이 프리뷰 생성
+            # 오버레이 프리뷰 생성 (precise: 신뢰도별 색상)
+            use_conf_color = (mode == "precise")
             preview_b64 = await asyncio.get_event_loop().run_in_executor(
                 None,
                 lambda: _analyzer.generate_overlay_preview(
                     img_norm, holes, contours,
-                    qc_result.get("qc_checks")
+                    qc_result.get("qc_checks"),
+                    use_confidence_color=use_conf_color,
                 )
             )
 
@@ -253,6 +285,7 @@ async def analyze_stream(
                 "analysis_time":       datetime.now().isoformat(),
                 "pixel_scale_nm":      effective_scale,
                 "scale_source":        "auto" if detected_scale else "manual",
+                "mode":                mode,
                 "holes":               holes,
                 "stats":               stats,
                 "classification":      classification,
@@ -296,6 +329,8 @@ async def analyze_batch(
     files: _List[UploadFile] = File(..., description="여러 이미지 파일 동시 분석"),
     pixel_scale_nm: float = Form(1.0, gt=0),
     grid_type_hint: str = Form("auto"),
+    mode: str = Form("balanced"),
+    min_confidence: float = Form(0.0, ge=0.0, le=1.0),
 ):
     """
     여러 파일을 일괄 분석하여 JSON 배열로 반환합니다. 각 파일의 result는
@@ -314,15 +349,16 @@ async def analyze_batch(
             )
             scale = detected_scale if detected_scale and detected_scale > 0 else pixel_scale_nm
 
-            img_norm  = await loop.run_in_executor(None, _analyzer.preprocess_normalize, img_array)
-            img_clahe = await loop.run_in_executor(None, _analyzer.preprocess_clahe, img_norm)
-            img_bin   = await loop.run_in_executor(None, _analyzer.preprocess_threshold, img_clahe)
-            img_clean = await loop.run_in_executor(None, _analyzer.preprocess_morph, img_bin)
-            contours  = await loop.run_in_executor(None, _analyzer.detect_contours, img_clean)
-            holes     = await loop.run_in_executor(None, _analyzer.measure_holes, contours, scale)
-            stats     = await loop.run_in_executor(
-                None, _analyzer.compute_stats, holes, img_array.shape[:2], scale
+            # v1.2.0: 통합 analyze() 사용 — 모드별 자동 라우팅
+            analysis = await loop.run_in_executor(
+                None,
+                lambda: _analyzer.analyze(
+                    img_array, scale, mode=mode, min_confidence=min_confidence
+                ),
             )
+            holes = analysis["holes"]
+            stats = analysis["stats"]
+            preview_b64_from_analyze = analysis["preview_b64"]
 
             if stats["total_holes"] == 0:
                 entry["error"] = "홀이 검출되지 않았습니다. 픽셀 스케일 또는 이미지 품질을 확인하세요."
@@ -338,17 +374,13 @@ async def analyze_batch(
                     classifier_best_match=classification.get("best_match"),
                 ),
             )
-            preview_b64 = await loop.run_in_executor(
-                None,
-                lambda: _analyzer.generate_overlay_preview(
-                    img_norm, holes, contours, qc_result.get("qc_checks")
-                ),
-            )
+            preview_b64 = preview_b64_from_analyze
 
             entry.update({
                 "analysis_time":      datetime.now().isoformat(),
                 "pixel_scale_nm":     scale,
                 "scale_source":       "auto" if detected_scale else "manual",
+                "mode":               mode,
                 "holes":              holes,
                 "stats":              stats,
                 "classification":     classification,

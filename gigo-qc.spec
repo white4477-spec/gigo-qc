@@ -28,6 +28,12 @@ hiddenimports += [
     "skimage",
     "skimage.measure",
     "skimage.morphology",
+    # v1.2.0: AI 기반 홀 인식 의존성
+    "skimage.feature",        # peak_local_max
+    "skimage.segmentation",   # watershed
+    "skimage.filters",        # threshold_sauvola, threshold_otsu
+    "skimage._shared",
+    "skimage._shared.utils",
     "reportlab",
     "reportlab.pdfgen",
     "reportlab.lib",

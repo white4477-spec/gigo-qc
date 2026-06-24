@@ -377,7 +377,10 @@ def _kpi_card(label: str, value: str, S: Dict[str, ParagraphStyle]) -> Table:
     return t
 
 
-def _build_kpis(stats: Dict[str, Any], S: Dict[str, ParagraphStyle]) -> list:
+_MODE_KOR = {"fast": "빠름", "balanced": "균형", "precise": "정밀"}
+
+
+def _build_kpis(stats: Dict[str, Any], S: Dict[str, ParagraphStyle], data: Dict[str, Any] | None = None) -> list:
     cards = [
         _kpi_card("평균 직경 (µm)", f"{stats.get('avg_diameter', 0):.2f}", S),
         _kpi_card("평균 원형도", f"{stats.get('avg_circularity', 0):.3f}", S),
@@ -390,7 +393,27 @@ def _build_kpis(stats: Dict[str, Any], S: Dict[str, ParagraphStyle]) -> list:
         ("LEFTPADDING", (0, 0), (-1, -1), 1),
         ("RIGHTPADDING", (0, 0), (-1, -1), 1),
     ]))
-    return [Paragraph("주요 측정값", S["h1"]), Spacer(1, 1 * mm), grid]
+
+    result = [Paragraph("주요 측정값", S["h1"]), Spacer(1, 1 * mm), grid]
+
+    # v1.2.0: AI 기반 분석 메타 칩 (mode + avg_confidence)
+    mode = (data or {}).get("mode")
+    avg_conf = stats.get("avg_confidence")
+    if mode or avg_conf is not None:
+        parts = []
+        if mode:
+            parts.append(f"분석 모드: <b>{_MODE_KOR.get(mode, mode)}</b>")
+        if avg_conf is not None:
+            parts.append(f"AI 신뢰도: <b>{avg_conf:.2f}</b>")
+        if stats.get("hough_added"):
+            parts.append(f"Hough 보완: <b>+{stats['hough_added']}</b>")
+        meta = "  ·  ".join(parts)
+        result.extend([
+            Spacer(1, 2 * mm),
+            Paragraph(meta, S["body"]),
+        ])
+
+    return result
 
 
 # ─── 섹션: QC 체크리스트 ──────────────────────────────────────────────────────
@@ -586,7 +609,7 @@ def create_pdf(data: Dict[str, Any]) -> bytes:
     story: list = []
     story.extend(_build_cover(data, S))
     story.append(Spacer(1, 6 * mm))
-    story.extend(_build_kpis(stats, S))
+    story.extend(_build_kpis(stats, S, data))
     story.append(Spacer(1, 6 * mm))
     story.extend(_build_qc_checks(qc, S))
     story.append(Spacer(1, 4 * mm))

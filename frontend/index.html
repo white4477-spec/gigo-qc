@@ -349,6 +349,32 @@ code,.mono{font-family:'JetBrains Mono',monospace}
         </div>
       </div>
 
+      <div class="settings-grid" style="margin-top:16px">
+        <div class="field">
+          <label for="setMode">분석 모드 <span style="color:var(--accent);font-size:11px;margin-left:6px">AI 기반</span></label>
+          <select id="setMode" class="select">
+            <option value="fast">빠름 (Otsu 단일)</option>
+            <option value="balanced" selected>균형 (Sauvola + Watershed, 권장)</option>
+            <option value="precise">정밀 (AI 신뢰도 점수)</option>
+          </select>
+          <span class="desc">Lacey 카본 그리드는 <strong>균형</strong> 또는 <strong>정밀</strong> 모드를 권장합니다.</span>
+        </div>
+        <div class="field">
+          <label for="setMinConfidence">최소 신뢰도 임계값 <span id="minConfidenceVal" style="color:var(--accent);font-weight:600">0.00</span></label>
+          <input type="range" id="setMinConfidence" min="0" max="1" step="0.05" value="0" style="width:100%">
+          <span class="desc">정밀 모드에서만 작동 — 이 점수 미만의 홀은 자동 제외(0 = 비활성).</span>
+        </div>
+      </div>
+
+      <div style="margin-top:16px;padding:14px;background:var(--surface-2);border-radius:10px;font-size:13px;color:var(--text-muted)">
+        <strong style="color:var(--text)">분석 모드 설명</strong>
+        <ul style="margin-top:8px;padding-left:20px;line-height:1.8">
+          <li><strong>빠름</strong> — 단일 Otsu 이진화 + 컨투어. 균일한 이미지·일괄 처리에 적합.</li>
+          <li><strong>균형</strong> — Sauvola 적응 이진화 + Watershed 홀 분리. 불균일 조명·인접 홀에 강건.</li>
+          <li><strong>정밀</strong> — 균형 + Hough Circle 앙상블 + AI 신뢰도 점수(0~1). 누락 보정·오염 자동 제거.</li>
+        </ul>
+      </div>
+
       <div style="margin-top:20px;padding:14px;background:var(--surface-2);border-radius:10px;font-size:13px;color:var(--text-muted)">
         <strong style="color:var(--text)">Grid Type 기준 요약</strong>
         <ul style="margin-top:8px;padding-left:20px;line-height:1.8">
@@ -391,7 +417,7 @@ code,.mono{font-family:'JetBrains Mono',monospace}
       </ul>
 
       <h3 style="font-size:14px;margin-top:18px;margin-bottom:6px">버전 정보</h3>
-      <p style="font-size:13px;color:var(--text-muted)">GIGO QC v1.1.0 · 박윤호 (강원대) · Lacey Carbon Grid QC for cryo-EM</p>
+      <p style="font-size:13px;color:var(--text-muted)">GIGO QC v1.2.0 · 박윤호 (강원대) · Lacey Carbon Grid QC for cryo-EM</p>
     </div>
   </div>
 
@@ -442,6 +468,7 @@ const fmtSize = (b) => {
   return (b/1048576).toFixed(1) + ' MB';
 };
 const fmtNum = (n, d=3) => (typeof n === 'number' ? n.toFixed(d) : String(n ?? '—'));
+const modeKor = (m) => ({fast:'빠름', balanced:'균형', precise:'정밀'}[m] || m || '권장');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 // ─── 테마 토글 ──────────────────────────────────────────────────────
@@ -455,6 +482,17 @@ applyTheme(localStorage.getItem('gigo-theme') || 'dark');
 $('#btnTheme').addEventListener('click', () => {
   applyTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
 });
+
+// ─── 분석 모드 신뢰도 슬라이더 ─────────────────────────────────────
+(function(){
+  const slider = document.getElementById('setMinConfidence');
+  const label = document.getElementById('minConfidenceVal');
+  if (slider && label){
+    const update = () => { label.textContent = parseFloat(slider.value).toFixed(2); };
+    slider.addEventListener('input', update);
+    update();
+  }
+})();
 
 // ─── 탭 ─────────────────────────────────────────────────────────────
 $$('.tab').forEach(btn => {
@@ -582,6 +620,8 @@ async function runSingleAnalysis(file){
   fd.append('file', file);
   fd.append('pixel_scale_nm', $('#setScale').value || '1.0');
   fd.append('grid_type_hint', $('#setGridType').value);
+  fd.append('mode', $('#setMode').value || 'balanced');
+  fd.append('min_confidence', $('#setMinConfidence').value || '0');
 
   showLoading(`${file.name} 분석 중…`);
   $('#singleResult').style.display = 'none';
@@ -637,6 +677,8 @@ async function runBatchAnalysis(files){
   for (const f of files) fd.append('files', f);
   fd.append('pixel_scale_nm', $('#setScale').value || '1.0');
   fd.append('grid_type_hint', $('#setGridType').value);
+  fd.append('mode', $('#setMode').value || 'balanced');
+  fd.append('min_confidence', $('#setMinConfidence').value || '0');
 
   // 배치는 progress 추적이 안되므로 indeterminate 표시
   showLoading(`${files.length}개 파일 분석 중…`);
@@ -727,6 +769,12 @@ function renderSingleResult(r){
       <div class="kpi"><div class="kpi-label">평균 직경</div><div class="kpi-value">${fmtNum(stats.avg_diameter, 2)}<span class="kpi-unit">µm</span></div></div>
       <div class="kpi"><div class="kpi-label">평균 원형도</div><div class="kpi-value">${fmtNum(stats.avg_circularity, 3)}</div></div>
       <div class="kpi"><div class="kpi-label">커버리지</div><div class="kpi-value">${fmtNum(stats.coverage_pct, 1)}<span class="kpi-unit">%</span></div></div>
+    </div>
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;font-size:12px">
+      <span style="background:var(--surface-2);padding:5px 10px;border-radius:6px;color:var(--text-muted)">분석 모드: <strong style="color:var(--accent)">${modeKor(r.mode)}</strong></span>
+      ${stats.avg_confidence !== undefined ? `<span style="background:var(--surface-2);padding:5px 10px;border-radius:6px;color:var(--text-muted)">AI 신뢰도: <strong style="color:var(--accent)">${fmtNum(stats.avg_confidence, 2)}</strong></span>` : ''}
+      ${stats.hough_added ? `<span style="background:var(--surface-2);padding:5px 10px;border-radius:6px;color:var(--text-muted)">Hough 보완: <strong>+${stats.hough_added}</strong></span>` : ''}
     </div>
 
     ${previewHtml}
